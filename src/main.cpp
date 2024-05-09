@@ -1,28 +1,3 @@
-/*******************************************************************
-    Displays Album Art on an 128 x 160 display. ESP32 Only
-
-    There is two approaches to this demoed in this example
-      - "displayImage" uses a memory buffer, it should be the fastest but possible uses the most memory.
-      - "displayImageUsingFile" uses a File reference
-
-    All references to SPIFFS are only required for the "displayImageUsingFile" path.
-
-    This example could easily be adapted to any TFT
-    based screen.
-
-    The library for the display will need to be modified to work
-    with a 128x160 display:
-    https://github.com/Bodmer/TFT_eSPI
-
-    NOTE: You need to get a Refresh token to use this example
-    Use the getRefreshToken example to get it.
-
-    Parts:
-    ESP32 D1 Mini stlye Dev board* - http://s.click.aliexpress.com/e/C6ds4my
-    ESP32 I2S Matrix Shield (From my Tindie) = https://www.tindie.com/products/brianlough/esp32-i2s-matrix-shield/
-    128x160 LCD Screen - shorturl.at/elKQV
-
- *******************************************************************/
 
 // ----------------------------
 // Standard Libraries
@@ -41,6 +16,11 @@
 
 #include <SpotifyArduino.h>
 #include <ArduinoJson.h>
+
+#include <Adafruit_GFX.h>
+#include <Adafruit_NeoMatrix.h>
+#include <Adafruit_NeoPixel.h>
+
 #include <config.h>
 
 // Country code, including this is advisable
@@ -49,6 +29,12 @@
 // including a "spotify_server_cert" variable
 // header is included as part of the SpotifyArduino libary
 #include <SpotifyArduinoCert.h>
+
+// led matrix
+Adafruit_NeoMatrix matrix = Adafruit_NeoMatrix(16, 16, 5,
+                                               NEO_MATRIX_TOP + NEO_MATRIX_LEFT +
+                                                   NEO_MATRIX_COLUMNS + NEO_MATRIX_ZIGZAG,
+                                               NEO_GRB + NEO_KHZ800);
 
 // file name for where to save the image.
 #define ALBUM_ART "/album.jpg"
@@ -68,14 +54,16 @@ SpotifyArduino spotify(client, SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET, SPOTIFY
 
 // You might want to make this much smaller, so it will update responsively
 
-unsigned long delayBetweenRequests = 1000; // Time between requests (30 seconds)
+unsigned long delayBetweenRequests = 2000; // Time between requests (30 seconds)
 unsigned long requestDueTime;              // time when request due
 
-// This next function will be called during decoding of the jpeg file to
-// render each block to the Matrix.  If you use a different display
-// you will need to adapt this function to suit.
 bool displayOutput(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t *bitmap)
 {
+    Serial.println("\n=====================");
+    Serial.printf("x: %d, y: %d, w: %d, h: %d\n", x, y, w, h);
+
+    matrix.drawRGBBitmap(x, y, bitmap, w, h);
+
     // // Stop further decoding as image is running off bottom of screen
     // if (y >= tft.height())
     //     return 0;
@@ -83,7 +71,7 @@ bool displayOutput(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t *bitma
     // tft.pushImage(x, y, w, h, bitmap);
 
     // // Return 1 to decode next block
-    // return 1;
+    return 1;
 }
 
 void setup()
@@ -107,15 +95,16 @@ void setup()
     // Start the tft display and set it to black
     // tft.init();
     // tft.fillScreen(TFT_BLACK);
+    matrix.begin();
+    matrix.setBrightness(32);
+    matrix.fillScreen(0);
+    matrix.show();
 
     // The jpeg image can be scaled by a factor of 1, 2, 4, or 8
     TJpgDec.setJpgScale(4);
 
     // The decoder must be given the exact name of the rendering function above
     TJpgDec.setCallback(displayOutput);
-
-    // The byte order can be swapped (set true for TFT_eSPI)
-    TJpgDec.setSwapBytes(true);
 
     WiFi.mode(WIFI_STA);
     WiFi.begin(WLAN_SSID, WLAN_PASS);
@@ -197,7 +186,8 @@ int displayImage(char *albumArtUrl)
     {
         Serial.print("Got Image");
         delay(1);
-        int jpegStatus = TJpgDec.drawJpg(28, 40, imageFile, imageSize);
+        int jpegStatus = TJpgDec.drawJpg(0, 0, imageFile, imageSize);
+        matrix.show();
         free(imageFile); // Make sure to free the memory!
         return jpegStatus;
     }
@@ -286,7 +276,7 @@ void printCurrentlyPlayingToSerial(CurrentlyPlaying currentlyPlaying)
         // Save the third album image into the smallestImage Variable above.
         smallestImage = currentlyPlaying.albumImages[2];
         Serial.println("------------------------");
-        Serial.print("Album Image: ");
+        Serial.printf("Album Image: (%d) ", i);
         Serial.println(currentlyPlaying.albumImages[i].url);
         Serial.print("Dimensions: ");
         Serial.print(currentlyPlaying.albumImages[i].width);
