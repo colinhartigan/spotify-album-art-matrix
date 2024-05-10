@@ -286,8 +286,7 @@ void loop()
                 if (newAlbum != lastAlbumUri)
                 {
                     Serial.println("updating art");
-                    char *my_url = const_cast<char *>(smallestImage.url);
-                    int displayImageResult = displayImage(my_url);
+                    int displayImageResult = displayImage((char *)(smallestImage.url));
 
                     if (displayImageResult == 0)
                     {
@@ -303,6 +302,7 @@ void loop()
             else
             {
                 drawClock();
+                lastAlbumUri = "";
             }
         }
         else
