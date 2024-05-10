@@ -1,0 +1,2 @@
+void initClock();
+void drawClock();
