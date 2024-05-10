@@ -308,6 +308,7 @@ void loop()
         else
         {
             drawClock();
+            lastAlbumUri = "";
         }
 
         requestDueTime = millis() + delayBetweenRequests;
