@@ -1,4 +1,4 @@
-
+char *stack_start; // to check stack size :)
 // std libs
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
@@ -14,99 +14,44 @@
 
 #include <SpotifyArduino.h>
 #include <ArduinoJson.h>
-
-#include <LiquidCrystal.h>
+#include <SpotifyArduinoCert.h>
 
 // custom modules
 #include <config.h>
 #include <clock.h>
 #include <globals.h>
+#include <LcdController.h>
 
 // spotify config
 #define SPOTIFY_MARKET "US"
-#include <SpotifyArduinoCert.h>
 
 // spotify/wifi client setup
 WiFiClientSecure client;
 SpotifyArduino spotify(client, SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET, SPOTIFY_REFRESH_TOKEN);
 
-// lcd
-LiquidCrystal lcd(23, 22, 5, 18, 19, 21);
-
 // timing
-unsigned long delayBetweenRequests = 1000; // = 1 second, fairly responsive
-unsigned long requestDueTime;
+unsigned int spotifyRefreshTime = 1000;
+unsigned int nextSpotifyRefresh;
+
+unsigned int lcdRefreshTime = 400;
+unsigned int nextLcdRefresh;
 
 // -----------------------------------
-// globals
+// "globals"
 #define ALBUM_ART "/album.jpg"
 String lastAlbumUri;
-CurrentlyPlaying currentlyPlaying;
+Mode currentMode = SPOTIFY;
 
+// tasks
+TaskHandle_t lcdTask;
+
+// -----------------------------------
 bool displayOutput(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t *bitmap)
 {
     // callback for the jpeg decoder, will render the image in blocks, then when this is done we draw (later in the loop)
     matrix.drawRGBBitmap(x, y, bitmap, w, h);
 
     return 1;
-}
-
-void setup()
-{
-    Serial.begin(115200);
-
-    if (!SPIFFS.begin()) // if not working for some reason, pass true and it will format SPIFFS. after that you can prob remove the true flag
-    {
-        Serial.println("SPIFFS init failed!");
-        while (1)
-            yield();
-    }
-    Serial.println("\r\ninit done.");
-
-    // matrix setup
-    matrix.begin();
-    matrix.setBrightness(150);
-    matrix.fillScreen(0);
-    matrix.show();
-
-    // lcd setup
-    // lcd.begin(16, 2);
-
-    // working with 64x64 images, downscale by 4 = 16x16
-    TJpgDec.setJpgScale(4);
-
-    // set callback function for jpeg decoder
-    TJpgDec.setCallback(displayOutput);
-
-    WiFi.mode(WIFI_STA);
-    WiFi.begin(WLAN_SSID, WLAN_PASS);
-
-    // lcd.setCursor(0, 0);
-    // lcd.print("connecting");
-    int col = 3;
-    while (WiFi.status() != WL_CONNECTED)
-    {
-        delay(250);
-        matrix.drawPixel(col, 8, matrix.Color(255, 255, 255));
-        matrix.show();
-        col += 3;
-        if (col > 12)
-        {
-            col = 3;
-            matrix.clear();
-        }
-    }
-    matrix.clear();
-    matrix.show();
-
-    Serial.println("");
-    Serial.printf("connected to %s\n", WLAN_SSID);
-    Serial.printf("IP address: %s\n", WiFi.localIP().toString().c_str());
-
-    // init RTC
-    initClock();
-
-    client.setCACert(spotify_server_cert);
 }
 
 int displayImageUsingFile(char *albumArtUrl)
@@ -146,13 +91,13 @@ int displayImageUsingFile(char *albumArtUrl)
 
 int displayImage(char *albumArtUrl)
 {
-    uint8_t *imageFile; // pointer that the library will store the image at (uses malloc)
-    int imageSize;      // library will update the size of the image
+    uint8_t *imageFile;
+    int imageSize;
     bool gotImage = spotify.getImage(albumArtUrl, &imageFile, &imageSize);
 
     if (gotImage)
     {
-        Serial.print("got image");
+        Serial.println("got image");
         delay(1);
         int jpegStatus = TJpgDec.drawJpg(0, 0, imageFile, imageSize);
         matrix.show();
@@ -165,152 +110,200 @@ int displayImage(char *albumArtUrl)
     }
 }
 
-void printCurrentlyPlayingToSerial(CurrentlyPlaying currentlyPlaying)
+void setMode(Mode newMode)
 {
-    // Use the details in this method or if you want to store them
-    // make sure you copy them (using something like strncpy)
-    const char *artist = currentlyPlaying.artists[0].artistName;
-    const char *song = currentlyPlaying.trackName;
+    if (newMode == currentMode)
+        return;
 
-    // lcd.clear();
-    // lcd.setCursor(0, 0);
-    // lcd.print(artist);
-    // lcd.setCursor(0, 1);
-    // lcd.print(song);
-
-    // Clear the Text every time a new song is created
-    Serial.println("--------- Currently Playing ---------");
-
-    Serial.print("Is Playing: ");
-    if (currentlyPlaying.isPlaying)
+    switch (newMode)
     {
-        Serial.println("Yes");
-    }
-    else
-    {
-        Serial.println("No");
+    case SPOTIFY:
+        lcd.backlight();
+        lcd.clear();
+        break;
+
+    case CLOCK:
+        lcd.noBacklight();
+        lcd.clear();
+        lastAlbumUri = "";
+        break;
+
+    default:
+        break;
     }
 
-    Serial.print("Track: ");
-    Serial.println(currentlyPlaying.trackName);
-    // Save the song name to a variable
-    // songName = const_cast<char *>(currentlyPlaying.trackName);
-    Serial.print("Track URI: ");
-    Serial.println(currentlyPlaying.trackUri);
-    Serial.println();
-
-    Serial.println("Artists: ");
-    for (int i = 0; i < currentlyPlaying.numArtists; i++)
-    {
-        Serial.print("Name: ");
-        // Save the song artist name to a variable
-        Serial.println(currentlyPlaying.artists[i].artistName);
-        // songArtist = const_cast<char *>(currentlyPlaying.artists[0].artistName);
-        Serial.print("Artist URI: ");
-        Serial.println(currentlyPlaying.artists[i].artistUri);
-        Serial.println();
-    }
-
-    Serial.print("Album: ");
-    Serial.println(currentlyPlaying.albumName);
-    Serial.print("Album URI: ");
-    Serial.println(currentlyPlaying.albumUri);
-    Serial.println();
-
-    long progress = currentlyPlaying.progressMs; // duration passed in the song
-    long duration = currentlyPlaying.durationMs; // Length of Song
-    Serial.print("Elapsed time of song (ms): ");
-    Serial.print(progress);
-    Serial.print(" of ");
-    Serial.println(duration);
-    Serial.println();
-
-    float percentage = ((float)progress / (float)duration) * 100;
-    int clampedPercentage = (int)percentage;
-    Serial.print("<");
-    for (int j = 0; j < 50; j++)
-    {
-        if (clampedPercentage >= (j * 2))
-        {
-            Serial.print("=");
-        }
-        else
-        {
-            Serial.print("-");
-        }
-    }
-    Serial.println(">");
-    Serial.println();
-
-    // will be in order of widest to narrowest
-    // currentlyPlaying.numImages is the number of images that
-    // are stored
-
-    for (int i = 0; i < currentlyPlaying.numImages; i++)
-    {
-        // Save the third album image into the smallestImage Variable above.
-        // smallestImage = currentlyPlaying.albumImages[2];
-        Serial.println("------------------------");
-        Serial.printf("Album Image: (%d) ", i);
-        Serial.println(currentlyPlaying.albumImages[i].url);
-        Serial.print("Dimensions: ");
-        Serial.print(currentlyPlaying.albumImages[i].width);
-        Serial.print(" x ");
-        Serial.print(currentlyPlaying.albumImages[i].height);
-        Serial.println();
-    }
-    Serial.println("------------------------");
+    currentMode = newMode;
 }
 
-void currentlyPlayingCallback(CurrentlyPlaying newCurrentlyPlaying)
+void currentlyPlayingCallback(CurrentlyPlaying currentlyPlaying)
 {
-    currentlyPlaying = newCurrentlyPlaying;
+    if (!currentlyPlaying.isPlaying)
+    {
+        setMode(CLOCK);
+        return;
+    }
+    {
+        // make sure mode is spotify
+        setMode(SPOTIFY);
+
+        // print some stuff on the lcd
+        String artist = String(currentlyPlaying.artists[0].artistName);
+        String song = String(currentlyPlaying.trackName);
+
+        // line 1 should be in the format of "Artist - Song"
+        String line1 = artist + " - " + song;
+        updateLine1((char *)line1.c_str(), true);
+
+        // line2 should show a progress bar
+        int progress = currentlyPlaying.progressMs;
+        int duration = currentlyPlaying.durationMs;
+        int progressLength = (progress * 16) / duration;
+        String line2 = "";
+        for (int i = 0; i < 16; i++)
+        {
+            if (i < progressLength)
+            {
+                line2 += "=";
+            }
+            else
+            {
+                line2 += "-";
+            }
+        }
+        updateLine2((char *)line2.c_str(), false);
+
+        // update album art
+        SpotifyImage smallestImage = currentlyPlaying.albumImages[2];
+        String newAlbum = String(smallestImage.url);
+        if (newAlbum != lastAlbumUri)
+        {
+            Serial.println("updating art");
+            int displayImageResult = displayImage((char *)(smallestImage.url));
+
+            if (displayImageResult == 0)
+            {
+                lastAlbumUri = newAlbum;
+            }
+            else
+            {
+                Serial.print("failed to display image: ");
+                Serial.println(displayImageResult);
+            }
+        }
+    }
+}
+
+void lcdLoop(void *pvParameters)
+{
+    while (1)
+    {
+        if (millis() > nextLcdRefresh)
+        {
+            updateLcd();
+            nextLcdRefresh = millis() + lcdRefreshTime;
+        }
+    }
+}
+
+void setup()
+{
+    Serial.begin(115200);
+
+    if (!SPIFFS.begin()) // if not working for some reason, pass true and it will format SPIFFS. after that you can prob remove the true flag
+    {
+        Serial.println("SPIFFS init failed!");
+        while (1)
+            yield();
+    }
+    Serial.println("\r\ninit done.");
+
+    // matrix setup
+    matrix.begin();
+    matrix.setBrightness(100);
+    matrix.fillScreen(0);
+    matrix.show();
+
+    // lcd setup
+    lcd.init();
+    lcd.backlight();
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.noAutoscroll();
+
+    // working with 64x64 images, downscale by 4 = 16x16
+    TJpgDec.setJpgScale(4);
+
+    // set callback function for jpeg decoder
+    TJpgDec.setCallback(displayOutput);
+
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(WLAN_SSID, WLAN_PASS);
+
+    lcd.print("connecting");
+    int col = 3;
+    while (WiFi.status() != WL_CONNECTED)
+    {
+        delay(250);
+        matrix.drawPixel(col, 8, matrix.Color(255, 255, 255));
+        matrix.show();
+        col += 3;
+        if (col > 12)
+        {
+            col = 3;
+            matrix.clear();
+        }
+    }
+    matrix.clear();
+    matrix.show();
+
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("connected");
+    lcd.setCursor(0, 1);
+    lcd.print(WiFi.localIP().toString().c_str());
+
+    // init RTC
+    initClock();
+
+    client.setCACert(spotify_server_cert);
+
+    // setup lcd task
+    xTaskCreatePinnedToCore(
+        lcdLoop,   /* Function to implement the task */
+        "lcdLoop", /* Name of the task */
+        10000,     /* Stack size in words */
+        NULL,      /* Task input parameter */
+        1,         /* Priority of the task */
+        &lcdTask,  /* Task handle. */
+        0);        /* Core where the task should run */
 }
 
 void loop()
 {
-    if (millis() > requestDueTime)
+    if (millis() > nextSpotifyRefresh)
     {
+        // memory usage for debugging
         Serial.printf("free heap: %d\n", ESP.getFreeHeap());
+        char stack;
+        Serial.printf("free stack: %d\n", &stack - stack_start);
 
+        // loop things
         Serial.println("getting player state");
 
         int status = spotify.getCurrentlyPlaying(currentlyPlayingCallback, SPOTIFY_MARKET);
         if (status == 200)
         {
-            Serial.println("got currently playing");
-            if (currentlyPlaying.isPlaying)
-            {
-                SpotifyImage smallestImage = currentlyPlaying.albumImages[2];
-                String newAlbum = String(smallestImage.url);
-                if (newAlbum != lastAlbumUri)
-                {
-                    Serial.println("updating art");
-                    int displayImageResult = displayImage((char *)(smallestImage.url));
-
-                    if (displayImageResult == 0)
-                    {
-                        lastAlbumUri = newAlbum;
-                    }
-                    else
-                    {
-                        Serial.print("failed to display image: ");
-                        Serial.println(displayImageResult);
-                    }
-                }
-            }
-            else
-            {
-                drawClock();
-                lastAlbumUri = "";
-            }
         }
         else
         {
-            drawClock();
-            lastAlbumUri = "";
+            setMode(CLOCK);
         }
 
-        requestDueTime = millis() + delayBetweenRequests;
+        if (currentMode == CLOCK)
+        {
+            drawClock();
+        }
+
+        nextSpotifyRefresh = millis() + spotifyRefreshTime;
     }
 }
