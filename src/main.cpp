@@ -53,8 +53,10 @@ unsigned long lastProgressTime;
 // matrix state
 ESP_Color::Color matrixBuffer[16][16];
 ESP_Color::Color matrixMirror[16][16];
-#define FULL_BRIGHTNESS 50
-#define TRANSITION_TIME 500
+
+#define FULL_BRIGHTNESS 75
+#define TRANSITION_INTERVAL 2
+#define TRANSITION_TIME 300
 
 // tasks
 TaskHandle_t lcdTask;
@@ -77,17 +79,34 @@ bool updateBuffer(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t *bitmap
     return 1;
 }
 
-float lerp(float a, float b, float t)
+float lerp(float a, float b, float t, bool clamp)
 {
-    return a + (b - a) * t;
+    if (clamp)
+    {
+        if (b - a > 0.5)
+        {
+            a += 1;
+        }
+        else if (a - b > 0.5)
+        {
+            b += 1;
+        }
+    }
+
+    float out = a + (b - a) * t;
+    if (clamp)
+    {
+        out = fmod(out, 1);
+    }
+    return out;
 }
 
 void lerpMatrix()
 {
     // get matrix state, convert to hsv, then fade to next color in buffer
     Serial.println("lerping matrix");
-
-    for (int n = 0; n < TRANSITION_TIME / 2; n++)
+    int steps = TRANSITION_TIME / TRANSITION_INTERVAL;
+    for (int n = 0; n < steps; n++)
     {
         for (int i = 0; i < 16; i++)
         {
@@ -108,9 +127,11 @@ void lerpMatrix()
                 float v1 = initialHsv.V;
 
                 // lerp
-                float h = lerp(h1, h2, n / 100.0);
-                float s = lerp(s1, s2, n / 100.0);
-                float v = lerp(v1, v2, n / 100.0);
+                float stepsFloat = (float)steps;
+
+                float h = lerp(h1, h2, n / stepsFloat, true);
+                float s = lerp(s1, s2, n / stepsFloat, false);
+                float v = lerp(v1, v2, n / stepsFloat, false);
 
                 ESP_Color::Color rgb = ESP_Color::Color::FromHsv(h, s, v);
 
@@ -118,7 +139,7 @@ void lerpMatrix()
             }
         }
         matrix.show();
-        delay(2);
+        delay(TRANSITION_INTERVAL);
     }
     // finally load in the actual buffer jic stuff was lost in the lerp
     for (int i = 0; i < 16; i++)
