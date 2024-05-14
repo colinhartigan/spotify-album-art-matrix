@@ -23,7 +23,6 @@ char *stack_start; // to check stack size :)
 #include <clock.h>
 #include <globals.h>
 #include <LcdController.h>
-#include <color.h>
 
 // spotify config
 #define SPOTIFY_MARKET "US"
@@ -141,6 +140,10 @@ void lerpMatrix()
         matrix.show();
         delay(TRANSITION_INTERVAL);
     }
+}
+
+void drawBuffer()
+{
     // finally load in the actual buffer jic stuff was lost in the lerp
     for (int i = 0; i < 16; i++)
     {
@@ -150,7 +153,6 @@ void lerpMatrix()
             matrixMirror[i][j] = matrixBuffer[i][j];
         }
     }
-    matrix.show();
 }
 
 int displayImage(char *albumArtUrl)
@@ -166,6 +168,8 @@ int displayImage(char *albumArtUrl)
         int jpegStatus = TJpgDec.drawJpg(0, 0, imageFile, imageSize);
         free(imageFile);
         lerpMatrix();
+        drawBuffer();
+        matrix.show();
         return jpegStatus;
     }
     else
@@ -185,6 +189,7 @@ void setMode(Mode newMode)
         lcd.backlight();
         lcd.clear();
         matrix.setBrightness(FULL_BRIGHTNESS);
+        drawBuffer();
         matrix.show();
         break;
 
@@ -252,38 +257,6 @@ void currentlyPlayingCallback(CurrentlyPlaying currentlyPlaying)
                 Serial.print("failed to display image: ");
                 Serial.println(displayImageResult);
             }
-        }
-    }
-}
-
-void lcdLoop(void *pvParameters)
-{
-    while (1)
-    {
-        if (millis() > nextLcdRefresh)
-        {
-            String line2 = "";
-
-            int elapsed = (millis() - lastProgressTime) / 1000;
-            int progress = lastProgress + elapsed;
-            if (progress > duration)
-                progress = duration;
-
-            line2 += String(progress / 60);
-            line2 += ":";
-            if (progress % 60 < 10)
-                line2 += "0";
-            line2 += String(progress % 60);
-            line2 += " / ";
-            line2 += String(duration / 60);
-            line2 += ":";
-            if (duration % 60 < 10)
-                line2 += "0";
-            line2 += String(duration % 60);
-            updateLine2((char *)line2.c_str(), false);
-
-            updateLcd();
-            nextLcdRefresh = millis() + lcdRefreshTime;
         }
     }
 }
@@ -359,6 +332,38 @@ void setup()
         1,         /* Priority of the task */
         &lcdTask,  /* Task handle. */
         0);        /* Core where the task should run */
+}
+
+void lcdLoop(void *pvParameters)
+{
+    while (1)
+    {
+        if (millis() > nextLcdRefresh)
+        {
+            String line2 = "";
+
+            int elapsed = (millis() - lastProgressTime) / 1000;
+            int progress = lastProgress + elapsed;
+            if (progress > duration)
+                progress = duration;
+
+            line2 += String(progress / 60);
+            line2 += ":";
+            if (progress % 60 < 10)
+                line2 += "0";
+            line2 += String(progress % 60);
+            line2 += " / ";
+            line2 += String(duration / 60);
+            line2 += ":";
+            if (duration % 60 < 10)
+                line2 += "0";
+            line2 += String(duration % 60);
+            updateLine2((char *)line2.c_str(), false);
+
+            updateLcd();
+            nextLcdRefresh = millis() + lcdRefreshTime;
+        }
+    }
 }
 
 void loop()
