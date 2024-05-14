@@ -16,11 +16,14 @@ char *stack_start; // to check stack size :)
 #include <ArduinoJson.h>
 #include <SpotifyArduinoCert.h>
 
+#include <ESP_Color.h>
+
 // custom modules
 #include <config.h>
 #include <clock.h>
 #include <globals.h>
 #include <LcdController.h>
+#include <color.h>
 
 // spotify config
 #define SPOTIFY_MARKET "US"
@@ -33,60 +36,100 @@ SpotifyArduino spotify(client, SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET, SPOTIFY
 unsigned int spotifyRefreshTime = 1000;
 unsigned int nextSpotifyRefresh;
 
-unsigned int lcdRefreshTime = 400;
+unsigned int lcdRefreshTime = 500;
 unsigned int nextLcdRefresh;
 
 // -----------------------------------
-// "globals"
+// spotify
 #define ALBUM_ART "/album.jpg"
 String lastAlbumUri;
-Mode currentMode = SPOTIFY;
+Mode currentMode = SPOTIFY_PLAYING;
+
+// progress
+int duration;
+int lastProgress;
+unsigned long lastProgressTime;
+
+// matrix state
+ESP_Color::Color matrixBuffer[16][16];
+ESP_Color::Color matrixMirror[16][16];
+#define FULL_BRIGHTNESS 50
+#define TRANSITION_TIME 500
 
 // tasks
 TaskHandle_t lcdTask;
 
 // -----------------------------------
-bool displayOutput(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t *bitmap)
+bool updateBuffer(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t *bitmap)
 {
-    // callback for the jpeg decoder, will render the image in blocks, then when this is done we draw (later in the loop)
-    matrix.drawRGBBitmap(x, y, bitmap, w, h);
+    for (int i = x; i < x + w; i++)
+    {
+        for (int j = y; j < y + h; j++)
+        {
+            uint16_t pixel = bitmap[(i - x) + (j - y) * w];
+
+            ESP_Color::Color color = ESP_Color::Color(pixel);
+
+            matrixBuffer[i][j] = color;
+        }
+    }
 
     return 1;
 }
 
-int displayImageUsingFile(char *albumArtUrl)
+float lerp(float a, float b, float t)
 {
-    if (SPIFFS.exists(ALBUM_ART) == true)
+    return a + (b - a) * t;
+}
+
+void lerpMatrix()
+{
+    // get matrix state, convert to hsv, then fade to next color in buffer
+    Serial.println("lerping matrix");
+
+    for (int n = 0; n < TRANSITION_TIME / 2; n++)
     {
-        Serial.println("Removing existing image");
-        SPIFFS.remove(ALBUM_ART);
-    }
+        for (int i = 0; i < 16; i++)
+        {
+            for (int j = 0; j < 16; j++)
+            {
+                // get pixel's target color
+                ESP_Color::Color target = matrixBuffer[i][j];
+                ESP_Color::HSVf targetHsv = target.ToHsv();
+                float h2 = targetHsv.H;
+                float s2 = targetHsv.S;
+                float v2 = targetHsv.V;
 
-    fs::File f = SPIFFS.open(ALBUM_ART, "w+");
-    if (!f)
+                // get initial values
+                ESP_Color::Color color = matrixMirror[i][j];
+                ESP_Color::HSVf initialHsv = color.ToHsv();
+                float h1 = initialHsv.H;
+                float s1 = initialHsv.S;
+                float v1 = initialHsv.V;
+
+                // lerp
+                float h = lerp(h1, h2, n / 100.0);
+                float s = lerp(s1, s2, n / 100.0);
+                float v = lerp(v1, v2, n / 100.0);
+
+                ESP_Color::Color rgb = ESP_Color::Color::FromHsv(h, s, v);
+
+                matrix.drawPixel(i, j, rgb.ToRgb565());
+            }
+        }
+        matrix.show();
+        delay(2);
+    }
+    // finally load in the actual buffer jic stuff was lost in the lerp
+    for (int i = 0; i < 16; i++)
     {
-        Serial.println("file open failed");
-        return -1;
+        for (int j = 0; j < 16; j++)
+        {
+            matrix.drawPixel(i, j, matrixBuffer[i][j].ToRgb565());
+            matrixMirror[i][j] = matrixBuffer[i][j];
+        }
     }
-
-    // Spotify uses a different cert for the Image server, so we need to swap to that for the call
-    client.setCACert(spotify_image_server_cert);
-    bool gotImage = spotify.getImage(albumArtUrl, &f);
-
-    // Swapping back to the main spotify cert
-    client.setCACert(spotify_server_cert);
-
-    // Make sure to close the file!
-    f.close();
-
-    if (gotImage)
-    {
-        return TJpgDec.drawFsJpg(0, 0, ALBUM_ART);
-    }
-    else
-    {
-        return -2;
-    }
+    matrix.show();
 }
 
 int displayImage(char *albumArtUrl)
@@ -100,8 +143,8 @@ int displayImage(char *albumArtUrl)
         Serial.println("got image");
         delay(1);
         int jpegStatus = TJpgDec.drawJpg(0, 0, imageFile, imageSize);
-        matrix.show();
-        free(imageFile); // Make sure to free the memory!
+        free(imageFile);
+        lerpMatrix();
         return jpegStatus;
     }
     else
@@ -117,9 +160,16 @@ void setMode(Mode newMode)
 
     switch (newMode)
     {
-    case SPOTIFY:
+    case SPOTIFY_PLAYING:
         lcd.backlight();
         lcd.clear();
+        matrix.setBrightness(FULL_BRIGHTNESS);
+        matrix.show();
+        break;
+
+    case SPOTIFY_PAUSED:
+        matrix.setBrightness(10);
+        matrix.show();
         break;
 
     case CLOCK:
@@ -139,12 +189,12 @@ void currentlyPlayingCallback(CurrentlyPlaying currentlyPlaying)
 {
     if (!currentlyPlaying.isPlaying)
     {
-        setMode(CLOCK);
+        setMode(SPOTIFY_PAUSED);
         return;
     }
     {
         // make sure mode is spotify
-        setMode(SPOTIFY);
+        setMode(SPOTIFY_PLAYING);
 
         // print some stuff on the lcd
         String artist = String(currentlyPlaying.artists[0].artistName);
@@ -155,22 +205,14 @@ void currentlyPlayingCallback(CurrentlyPlaying currentlyPlaying)
         updateLine1((char *)line1.c_str(), true);
 
         // line2 should show a progress bar
-        int progress = currentlyPlaying.progressMs;
-        int duration = currentlyPlaying.durationMs;
-        int progressLength = (progress * 16) / duration;
-        String line2 = "";
-        for (int i = 0; i < 16; i++)
+        int newProgress = currentlyPlaying.progressMs / 1000;
+        int newDuration = currentlyPlaying.durationMs / 1000;
+        if (newProgress != lastProgress)
         {
-            if (i < progressLength)
-            {
-                line2 += "=";
-            }
-            else
-            {
-                line2 += "-";
-            }
+            lastProgress = newProgress;
+            lastProgressTime = millis();
         }
-        updateLine2((char *)line2.c_str(), false);
+        duration = newDuration;
 
         // update album art
         SpotifyImage smallestImage = currentlyPlaying.albumImages[2];
@@ -199,6 +241,26 @@ void lcdLoop(void *pvParameters)
     {
         if (millis() > nextLcdRefresh)
         {
+            String line2 = "";
+
+            int elapsed = (millis() - lastProgressTime) / 1000;
+            int progress = lastProgress + elapsed;
+            if (progress > duration)
+                progress = duration;
+
+            line2 += String(progress / 60);
+            line2 += ":";
+            if (progress % 60 < 10)
+                line2 += "0";
+            line2 += String(progress % 60);
+            line2 += " / ";
+            line2 += String(duration / 60);
+            line2 += ":";
+            if (duration % 60 < 10)
+                line2 += "0";
+            line2 += String(duration % 60);
+            updateLine2((char *)line2.c_str(), false);
+
             updateLcd();
             nextLcdRefresh = millis() + lcdRefreshTime;
         }
@@ -219,7 +281,7 @@ void setup()
 
     // matrix setup
     matrix.begin();
-    matrix.setBrightness(100);
+    matrix.setBrightness(FULL_BRIGHTNESS);
     matrix.fillScreen(0);
     matrix.show();
 
@@ -234,7 +296,7 @@ void setup()
     TJpgDec.setJpgScale(4);
 
     // set callback function for jpeg decoder
-    TJpgDec.setCallback(displayOutput);
+    TJpgDec.setCallback(updateBuffer);
 
     WiFi.mode(WIFI_STA);
     WiFi.begin(WLAN_SSID, WLAN_PASS);

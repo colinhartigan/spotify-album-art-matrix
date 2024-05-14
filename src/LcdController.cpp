@@ -42,7 +42,7 @@ void updateLcd()
         strncpy(line1Output, line1, 16);
     }
     line1Output[16] = '\0';
-    Serial.printf("%s (%d, %d)\n", line1Output, line1Offset, strlen(line1));
+    // Serial.printf("%s (%d, %d)\n", line1Output, line1Offset, strlen(line1));
     lcd.setCursor(0, 0);
     lcd.print(line1Output);
 

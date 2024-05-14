@@ -9,6 +9,7 @@ inline LiquidCrystal_I2C lcd(0x27, 16, 2);
 
 enum Mode
 {
-    SPOTIFY,
+    SPOTIFY_PLAYING,
+    SPOTIFY_PAUSED,
     CLOCK
 };
