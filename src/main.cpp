@@ -61,6 +61,10 @@ ESP_Color::Color matrixMirror[16][16];
 TaskHandle_t lcdTask;
 
 // -----------------------------------
+
+// headers if needed
+
+//-----------------------------------
 bool updateBuffer(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t *bitmap)
 {
     for (int i = x; i < x + w; i++)
@@ -261,6 +265,38 @@ void currentlyPlayingCallback(CurrentlyPlaying currentlyPlaying)
     }
 }
 
+void lcdLoop(void *pvParameters)
+{
+    while (1)
+    {
+        if (millis() > nextLcdRefresh)
+        {
+            String line2 = "";
+
+            int elapsed = (millis() - lastProgressTime) / 1000;
+            int progress = lastProgress + elapsed;
+            if (progress > duration)
+                progress = duration;
+
+            line2 += String(progress / 60);
+            line2 += ":";
+            if (progress % 60 < 10)
+                line2 += "0";
+            line2 += String(progress % 60);
+            line2 += " / ";
+            line2 += String(duration / 60);
+            line2 += ":";
+            if (duration % 60 < 10)
+                line2 += "0";
+            line2 += String(duration % 60);
+            updateLine2((char *)line2.c_str(), false);
+
+            updateLcd();
+            nextLcdRefresh = millis() + lcdRefreshTime;
+        }
+    }
+}
+
 void setup()
 {
     Serial.begin(115200);
@@ -332,38 +368,6 @@ void setup()
         1,         /* Priority of the task */
         &lcdTask,  /* Task handle. */
         0);        /* Core where the task should run */
-}
-
-void lcdLoop(void *pvParameters)
-{
-    while (1)
-    {
-        if (millis() > nextLcdRefresh)
-        {
-            String line2 = "";
-
-            int elapsed = (millis() - lastProgressTime) / 1000;
-            int progress = lastProgress + elapsed;
-            if (progress > duration)
-                progress = duration;
-
-            line2 += String(progress / 60);
-            line2 += ":";
-            if (progress % 60 < 10)
-                line2 += "0";
-            line2 += String(progress % 60);
-            line2 += " / ";
-            line2 += String(duration / 60);
-            line2 += ":";
-            if (duration % 60 < 10)
-                line2 += "0";
-            line2 += String(duration % 60);
-            updateLine2((char *)line2.c_str(), false);
-
-            updateLcd();
-            nextLcdRefresh = millis() + lcdRefreshTime;
-        }
-    }
 }
 
 void loop()
