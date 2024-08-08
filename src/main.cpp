@@ -2,6 +2,7 @@ char *stack_start; // to check stack size :)
 // std libs
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
+#include <esp_wifi.h>
 #include <FS.h>
 #include "SPIFFS.h"
 
@@ -54,8 +55,8 @@ ESP_Color::Color matrixBuffer[16][16];
 ESP_Color::Color matrixMirror[16][16];
 
 #define FULL_BRIGHTNESS 75
-#define TRANSITION_INTERVAL 2
-#define TRANSITION_TIME 300
+#define ART_TRANSITION_INTERVAL_TIME_TARGET_MS 2
+#define ART_TRANSITION_TIME_MS 500
 
 // tasks
 TaskHandle_t lcdTask;
@@ -108,9 +109,10 @@ void lerpMatrix()
 {
     // get matrix state, convert to hsv, then fade to next color in buffer
     Serial.println("lerping matrix");
-    int steps = TRANSITION_TIME / TRANSITION_INTERVAL;
+    int steps = ART_TRANSITION_TIME_MS / ART_TRANSITION_INTERVAL_TIME_TARGET_MS;
     for (int n = 0; n < steps; n++)
     {
+        int time = millis();
         for (int i = 0; i < 16; i++)
         {
             for (int j = 0; j < 16; j++)
@@ -130,11 +132,11 @@ void lerpMatrix()
                 float v1 = initialHsv.V;
 
                 // lerp
-                float stepsFloat = (float)steps;
+                float incriment = n / (float)steps;
 
-                float h = lerp(h1, h2, n / stepsFloat, true);
-                float s = lerp(s1, s2, n / stepsFloat, false);
-                float v = lerp(v1, v2, n / stepsFloat, false);
+                float h = lerp(h1, h2, incriment, true);
+                float s = lerp(s1, s2, incriment, false);
+                float v = lerp(v1, v2, incriment, false);
 
                 ESP_Color::Color rgb = ESP_Color::Color::FromHsv(h, s, v);
 
@@ -142,7 +144,11 @@ void lerpMatrix()
             }
         }
         matrix.show();
-        delay(TRANSITION_INTERVAL);
+        // try to maintain constant fps
+        if (millis() - time < ART_TRANSITION_INTERVAL_TIME_TARGET_MS)
+        {
+            delay(ART_TRANSITION_INTERVAL_TIME_TARGET_MS - (millis() - time));
+        }
     }
 }
 
@@ -331,7 +337,13 @@ void setup()
     WiFi.mode(WIFI_STA);
     WiFi.begin(WLAN_SSID, WLAN_PASS);
 
+    uint8_t baseMac[6];
+    esp_err_t ret = esp_wifi_get_mac(WIFI_IF_STA, baseMac);
     lcd.print("connecting");
+    lcd.setCursor(0, 1);
+    lcd.printf("%02X%02X%02X%02X%02X", baseMac[0], baseMac[1], baseMac[2], baseMac[3], baseMac[4], baseMac[5]);
+    Serial.printf("%02X:%02X:%02X:%02X:%02X", baseMac[0], baseMac[1], baseMac[2], baseMac[3], baseMac[4], baseMac[5]);
+
     int col = 3;
     while (WiFi.status() != WL_CONNECTED)
     {
