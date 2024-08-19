@@ -341,8 +341,8 @@ void setup()
     esp_err_t ret = esp_wifi_get_mac(WIFI_IF_STA, baseMac);
     lcd.print("connecting");
     lcd.setCursor(0, 1);
-    lcd.printf("%02X%02X%02X%02X%02X", baseMac[0], baseMac[1], baseMac[2], baseMac[3], baseMac[4], baseMac[5]);
-    Serial.printf("%02X:%02X:%02X:%02X:%02X", baseMac[0], baseMac[1], baseMac[2], baseMac[3], baseMac[4], baseMac[5]);
+    lcd.printf("%02X%02X%02X%02X%02X%02X", baseMac[0], baseMac[1], baseMac[2], baseMac[3], baseMac[4], baseMac[5]);
+    Serial.printf("%02X:%02X:%02X:%02X:%02X:%02X", baseMac[0], baseMac[1], baseMac[2], baseMac[3], baseMac[4], baseMac[5]);
 
     int col = 3;
     while (WiFi.status() != WL_CONNECTED)
